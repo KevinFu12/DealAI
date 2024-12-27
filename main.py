@@ -8,7 +8,6 @@ import os
 import math
 import re
 from sklearn.utils.validation import check_array
-from sklearn.preprocessing import StandardScaler
 import warnings
 import nltk
 from nltk.tokenize import word_tokenize
@@ -18,7 +17,7 @@ def detect_bargaining(input_text):
     bargaining_keywords = ["", "maybe", "buy", "sell", "offer", "price", "about", "dunno"]
     bargaining_verbs = ["buy", "sell"]
 
-    # Periksa apakah input hanya mengandung angka
+    # only digits
     if len(tokens) == 1 and tokens[0].isdigit():
         return True
 
@@ -38,9 +37,6 @@ def ignore_warnings(*args, **kwargs):
 
 check_array = ignore_warnings
 
-# Membuat scaler
-scaler = StandardScaler()
-
 # Impor BargainModel
 spec = importlib.util.spec_from_file_location("BargainModel", "BargainModel.py")
 BargainModel = importlib.util.module_from_spec(spec)
@@ -55,23 +51,31 @@ def find_best_shops(shop_data, sample_input):
     return BargainModel.find_best_shop_knn(shop_data, sample_input, k=3)
 
 def determine_response(user_input, best_shops):
-    lowest = math.ceil(min(best_shops['Final_Price']))
-    highest = math.ceil(max(best_shops['Final_Price']))
-    delivery_time = best_shops['Delivery_Time'].values[0]
-    shop_name = best_shops['Shop_Name'].values[0]
-
+    # Extract the user price from the input (assumed to be the last number in the sentence)
     user_price = int(user_input.split()[-1])
+
+    # Find the closest price to the user price
+    best_shops['Price_Difference'] = abs(best_shops['Final_Price'] - user_price)
+    closest_shop = best_shops.loc[best_shops['Price_Difference'].idxmin()]
+    
+    # Retrieve the shop details for the closest shop
+    lowest = math.ceil(closest_shop['Final_Price'])
+    highest = math.ceil(best_shops['Final_Price'].max())
+    delivery_time = closest_shop['Delivery_Time']
+    shop_name = closest_shop['Shop_Name']
+
+    # Determine the response based on the user's price
     if user_price <= 0.8 * lowest:
         # Reject
-        prompt = f"The offer is rejected, the highest i can do is {lowest}. Sorry!"
+        prompt = f"The offer is rejected, the highest I can do is {lowest}. Sorry!"
     elif user_price < lowest:
         # Counteroffer
-        prompt = f"Counteroffer: {math.ceil(1.01 * lowest)}, I think this is more competitive. Delivery in {delivery_time} days."
+        prompt = f"Counteroffer: {math.ceil(1.01 * lowest)}, I think this is more competitive. Delivery in {delivery_time} days from {shop_name}."
     elif user_price >= lowest and user_price <= highest:
         # Accept
-        prompt = f"Accept! Your book will arrive in {delivery_time} days for {user_price}. Do you accept?"
+        prompt = f"Accept! Your book will arrive in {delivery_time} days from {shop_name} for {user_price}! Do you accept?"
     elif user_price > highest:
-        prompt = f"OF COURSE, ACCEPT. Thank You! Delivery in {delivery_time} days for {user_price}. Do you accept?"
+        prompt = f"OF COURSE, ACCEPT. Thank You! Delivery in {delivery_time} days from {shop_name} for {user_price}. Do you accept?"
 
     return prompt
 
@@ -103,16 +107,24 @@ if __name__ == "__main__":
 
     context = ""
     print("Welcome, I am DealAI, type 'exit' to quit")
-    res = chain.invoke({"context": "", "question": f"You are DealAI, an e-commerce bargain bot. You are not allowed to talk about anything other than bargaining. Keep that in mind. First you introduce yourself. Explain that you have 1 famous novel to offer with price of {offer_price}, tell the user the title and the story"})
+    res = chain.invoke({"context": "", "question": f"You are DealAI, an e-commerce bargain bot. First, crack a dad joke or a pun. You are not allowed to talk about anything other than bargaining. Keep that in mind. First you introduce yourself. Explain that you have 1 interesting modern novel to offer with price of around {offer_price} thousand rupiahs, tell the user the title and the story"})
     print(res)
 
     best_shops = None
+    
+    affirmative_responses = {"deal", "yeah","ye", "y","yea", "ya", "yes", "i think so", "i do", "uh huh"}
+    rejection_responses = {"nope", "no", "n", "dont", "goodbye", "dunno", "nuh uh", "nah"}
+    farewell_responses = {"thanks", "im good", "no thanks", "thank you", "thank", "much obliged", "see you"}
 
     while True:
         user_input = input("You: ")
 
         if user_input.lower() == "exit":
             print("Thank you for using DealAI, have a nice day.")
+            break
+        
+        if any(farewell in user_input.lower() for farewell in farewell_responses):
+            print("Bot: Okay, thank you for using DealAI, have a nice day.")
             break
 
         numbers = extract_numbers(user_input)
@@ -135,13 +147,19 @@ if __name__ == "__main__":
                     context += f"\nUser: {user_input}\nAI: {response}"
 
                     if "Do you accept?" in response:
-                        next_input = input("You: ")
-                        if next_input.lower() == "deal":
-                            print(f"Deal accepted! Shop: {shop_name}, Price: {book_price}, Delivery Time: {delivery_time} days.")
-                            print("Thank you for using DealAI!. It was a great transaction")
-                            break
-                        else:
-                            print("Bot: Let's try again :)")
+                        while True:  # Loop to validate the response
+                            next_input = input("You: ").lower()
+                            
+                            # Check if user accepts the deal
+                            if next_input in affirmative_responses:
+                                print(f"Deal accepted! Shop: {shop_name}, Delivery Time: {delivery_time} days.")
+                                print("Thank you for using DealAI! It was a great transaction")
+                                break  # End the conversation
+                            elif next_input in rejection_responses:
+                                print("Bot: Let's try again :)")
+                                break  # Restart the negotiation or offer
+                            else:
+                                print("Bot: Hmm, do you accept or reject my previous offer?")
                 except Exception as e:
                     print(f"Error: {e}")
             else:

@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-def generate_shop_data(num_shops=100, seed=42):
+def generate_shop_data(num_shops=5000, seed=42):
     np.random.seed(seed)
     
     shop_names = [f"Shop_{i+1}" for i in range(num_shops)]
